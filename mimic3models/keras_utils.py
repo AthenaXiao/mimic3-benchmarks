@@ -5,6 +5,7 @@ import numpy as np
 from mimic3models import metrics
 
 import keras
+from keras.losses import binary_crossentropy
 import keras.backend as K
 
 if K.backend() == 'tensorflow':
@@ -28,6 +29,15 @@ class DecompensationMetrics(keras.callbacks.Callback):
         self.verbose = verbose
         self.train_history = []
         self.val_history = []
+        self.loss_history = []
+    
+    def cross_entropy(self,y_pred,y_true):
+        m = len(y_true)
+        y_pred = np.stack([1-y_pred,y_pred],axis=1)
+        #y_true = np.stack([1-y_true,y_true],axis=1)
+        log_likelihood = -np.log(y_pred[range(m),y])
+        loss = np.sum(log_likelihood) / m
+        return loss
 
     def calc_metrics(self, data_gen, history, dataset, logs):
         y_true = []
@@ -35,24 +45,63 @@ class DecompensationMetrics(keras.callbacks.Callback):
         for i in range(data_gen.steps):
             if self.verbose == 1:
                 print("\tdone {}/{}".format(i, data_gen.steps), end='\r')
-            (x, y) = next(data_gen)
+            (x, y,_) = next(data_gen)
             pred = self.model.predict(x, batch_size=self.batch_size)
+            #print(pred)
             if self.deep_supervision:
                 for m, t, p in zip(x[1].flatten(), y.flatten(), pred.flatten()):
                     if np.equal(m, 1):
                         y_true.append(t)
                         predictions.append(p)
             else:
-                y_true += list(y.flatten())
-                predictions += list(pred.flatten())
+                y=np.array(y)
+                if len(y.shape)>1:
+                    y_1d = [np.argmax(i) for i in y]
+                else:
+                    y_1d = list(y.flatten())
+                y_true += y_1d
+                pred=np.array(pred)
+                if pred.shape[1]>1:
+                    pred_1d = [i[1] for i in pred]
+                else:
+                    pred_1d = list(pred.flatten())
+                predictions += pred_1d
         print('\n')
+        self.display_loss_0_1(y_true,predictions)
         predictions = np.array(predictions)
         predictions = np.stack([1 - predictions, predictions], axis=1)
         ret = metrics.print_metrics_binary(y_true, predictions)
         for k, v in ret.items():
             logs[dataset + '_' + k] = v
         history.append(ret)
+    def display_loss_0_1(self,y_true,y_pred):
+        y_true_v = K.variable(y_true)
+        y_pred_v = K.variable(y_pred)
+        overall_los = K.eval(binary_crossentropy(y_true_v,y_pred_v))
+        y_pred_1 = [pred for label,pred in zip(y_true,y_pred) if label==1]
+        y_pred_0 = [pred for label,pred in zip(y_true,y_pred) if label==0]
+        y_pred_1_v = K.variable(y_pred_1)
+        y_pred_0_v = K.variable(y_pred_0)
+        print("{} class 0 in this epoch".format(len(y_pred_0)))
+        print("{} class 1 in this epoch".format(len(y_pred_1)))
+        label_0 = np.zeros_like(y_pred_0)
+        label_1 = np.ones_like(y_pred_1)
+        label_0_v = K.variable(label_0)
+        label_1_v = K.variable(label_1)
+        loss1 = K.eval(binary_crossentropy(label_1_v,y_pred_1_v))
+        #loss1.fit(label_1,y_pred_1)
+        loss0 = K.eval(binary_crossentropy(label_0_v,y_pred_0_v))
+        print("overall loss: {}".format(overall_los))
+        print("loss1: {}".format(loss1))
+        print("loss0: {}".format(loss0))
 
+            
+        
+ 
+    #def on_batch_end(self,batch,logs={}):
+    #    self.loss_history.append(logs.get('loss'))
+
+        
     def on_epoch_end(self, epoch, logs={}):
         print("\n==>predicting on train")
         self.calc_metrics(self.train_data_gen, self.train_history, 'train', logs)

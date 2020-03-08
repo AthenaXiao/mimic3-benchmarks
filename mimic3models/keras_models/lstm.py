@@ -22,8 +22,10 @@ class Network(Model):
         self.rec_dropout = rec_dropout
         self.depth = depth
 
-        if task in ['decomp', 'ihm', 'ph']:
+        if task in ['decomp','ihm', 'ph']:
             final_activation = 'sigmoid'
+        #elif task in ['decomp']:
+        #    final_activation = 'softmax'
         elif task in ['los']:
             if num_classes == 1:
                 final_activation = 'relu'

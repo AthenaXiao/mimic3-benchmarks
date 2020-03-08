@@ -16,8 +16,10 @@ from mimic3models import keras_utils
 from mimic3models import common_utils
 
 from keras.callbacks import ModelCheckpoint, CSVLogger
+import keras
 
-
+#os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+#os.environ["CUDA_VISIBLE_DEVICES"]="0"
 parser = argparse.ArgumentParser()
 common_utils.add_common_arguments(parser)
 parser.add_argument('--deep_supervision', dest='deep_supervision', action='store_true')
@@ -25,6 +27,10 @@ parser.add_argument('--data', type=str, help='Path to the data of decompensation
                     default=os.path.join(os.path.dirname(__file__), '../../data/decompensation/'))
 parser.add_argument('--output_dir', type=str, help='Directory relative which all output files are stored',
                     default='.')
+parser.add_argument('--train_data',type=str, help = 'Training file',default='train_listfile.csv')
+parser.add_argument('--num_classes', type=int, help='classifier dimension',default=1)
+parser.add_argument('--val_batch_size',type=int,help='set the validation batch_size is 1 so that we can know the loss of each instance',default=1)
+parser.add_argument('--weight',type=float,help='weight ratio 1:0',default=1)
 parser.set_defaults(deep_supervision=False)
 args = parser.parse_args()
 print(args)
@@ -35,14 +41,14 @@ if args.small_part:
 # Build readers, discretizers, normalizers
 if args.deep_supervision:
     train_data_loader = common_utils.DeepSupervisionDataLoader(dataset_dir=os.path.join(args.data, 'train'),
-                                                               listfile=os.path.join(args.data, 'train_listfile.csv'),
+                                                               listfile=os.path.join(args.data, args.train_data),
                                                                small_part=args.small_part)
     val_data_loader = common_utils.DeepSupervisionDataLoader(dataset_dir=os.path.join(args.data, 'train'),
                                                              listfile=os.path.join(args.data, 'val_listfile.csv'),
                                                              small_part=args.small_part)
 else:
     train_reader = DecompensationReader(dataset_dir=os.path.join(args.data, 'train'),
-                                        listfile=os.path.join(args.data, 'train_listfile.csv'))
+                                        listfile=os.path.join(args.data, args.train_data))
     val_reader = DecompensationReader(dataset_dir=os.path.join(args.data, 'train'),
                                       listfile=os.path.join(args.data, 'val_listfile.csv'))
 
@@ -88,6 +94,7 @@ optimizer_config = {'class_name': args.optimizer,
                     'config': {'lr': args.lr,
                                'beta_1': args.beta_1}}
 
+    
 # NOTE: one can use binary_crossentropy even for (B, T, C) shape.
 #       It will calculate binary_crossentropies for each class
 #       and then take the mean over axis=-1. Tre results is (B, T).
@@ -115,10 +122,11 @@ else:
         train_nbatches = 40
         val_nbatches = 40
     train_data_gen = utils.BatchGen(train_reader, discretizer,
-                                    normalizer, args.batch_size, train_nbatches, True)
+                                    normalizer, args.batch_size, train_nbatches,args.num_classes, True,1,args.weight)
     val_data_gen = utils.BatchGen(val_reader, discretizer,
-                                  normalizer, args.batch_size, val_nbatches, False)
-
+                                  normalizer, args.val_batch_size, val_nbatches, args.num_classes, False,1,args.weight)
+    print("type of train_data_gen:"+str(type(train_data_gen)))
+    print("length of train_data_gen: {}".format(train_data_gen))
 if args.mode == 'train':
 
     # Prepare training
@@ -128,7 +136,8 @@ if args.mode == 'train':
                                                          val_data_gen=val_data_gen,
                                                          deep_supervision=args.deep_supervision,
                                                          batch_size=args.batch_size,
-                                                         verbose=args.verbose)
+                                                         verbose=args.verbose,
+                                                         early_stopping=False)
     # make sure save directory exists
     dirname = os.path.dirname(path)
     if not os.path.exists(dirname):
@@ -140,7 +149,7 @@ if args.mode == 'train':
         os.makedirs(keras_logs)
     csv_logger = CSVLogger(os.path.join(keras_logs, model.final_name + '.csv'),
                            append=True, separator=';')
-
+    
     print("==> training")
     model.fit_generator(generator=train_data_gen,
                         steps_per_epoch=train_data_gen.steps,

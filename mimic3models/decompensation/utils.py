@@ -18,13 +18,16 @@ def preprocess_chunk(data, ts, discretizer, normalizer=None):
 class BatchGen(object):
 
     def __init__(self, reader, discretizer, normalizer,
-                 batch_size, steps, shuffle, return_names=False):
+                 batch_size, steps, num_classes, shuffle, class_0_weight=1,class_1_weight=1,return_names=False):
         self.reader = reader
         self.discretizer = discretizer
         self.normalizer = normalizer
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.return_names = return_names
+        self.class_0_weight = class_0_weight
+        self.class_1_weight = class_1_weight
+        self.num_classes = num_classes
 
         if steps is None:
             self.n_examples = reader.get_number_of_examples()
@@ -58,10 +61,23 @@ class BatchGen(object):
 
                 for i in range(0, current_size, B):
                     X = common_utils.pad_zeros(Xs[i:i + B])
-                    y = np.array(ys[i:i + B])
+                    y_1d = np.array(ys[i:i + B])
+                    y = y_1d
+                    #print(y_1d)
+                    # print(self.num_classes)
+                    if self.num_classes!=1:
+                        y = np.zeros((y_1d.size,self.num_classes))
+                        #print(y)
+                        y[np.arange(y_1d.size),y_1d] = 1
+                    #print(y)
                     batch_names = names[i:i+B]
                     batch_ts = ts[i:i+B]
-                    batch_data = (X, y)
+                    weight_list = [self.class_0_weight if x==0 else self.class_1_weight for x in np.nditer(y_1d)]
+                    #print(weight_list)
+                    sample_weight = np.asanyarray(weight_list,dtype=float)
+                    sample_weight = sample_weight.reshape(y_1d.shape)
+                    batch_data = (X, y,sample_weight)
+                    #batch_data = (X,y)
                     if not self.return_names:
                         yield batch_data
                     else:
